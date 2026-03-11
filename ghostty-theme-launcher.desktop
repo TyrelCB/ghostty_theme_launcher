@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Ghostty Theme Launcher
+Type=Application
+Comment=Choose a Ghostty theme before opening a terminal
+TryExec=/home/tyrel/.local/bin/ghostty-theme-launcher
+Exec=/home/tyrel/.local/bin/ghostty-theme-launcher
+Icon=com.mitchellh.ghostty
+Categories=System;TerminalEmulator;
+Keywords=terminal;ghostty;theme;
+StartupNotify=true
+StartupWMClass=com.mitchellh.ghostty
+Terminal=false
