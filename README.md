@@ -153,20 +153,24 @@ You can also run the installed script directly:
 The launcher sets the Ghostty window title to:
 
 ```text
-<theme> - <pwd>
+<theme> - <app> - <pwd>
 ```
 
-This is the launch directory at startup, not a live-updating shell title.
+With the bundled bash shell helper, this updates live as you change directories
+or run a foreground command. At an idle prompt, `<app>` is `bash`.
 
-If the launcher is started from a desktop menu, the working directory is often
-your home directory, so the title will usually look like:
+If the launcher is started from a desktop menu, the initial working directory is
+usually your home directory, so the title will often start out looking like:
 
 ```text
-Vibrant Ink - /home/tyrel
+Vibrant Ink - bash - /home/tyrel
 ```
 
-If you want the title to update whenever you `cd`, that should be implemented
-through shell integration instead of a fixed `--title` argument.
+For non-bash shells, the launcher falls back to a fixed startup title of:
+
+```text
+<theme> - <pwd>
+```
 
 ## Customization
 
@@ -176,8 +180,8 @@ reorder themes.
 Change the default selected theme by updating the `Vibrant Ink` check in the
 dialog-building loop.
 
-Change the title format by editing the `window_title` assignment near the end
-of the script.
+Change the live bash title format by editing the helper in
+`ghostty-theme-launcher-shell`.
 
 ## Validation
 
@@ -185,6 +189,7 @@ Validate the script syntax:
 
 ```bash
 bash -n ghostty-theme-launcher.sh
+bash -n ghostty-theme-launcher-shell
 sh -n install.sh
 python3 -m py_compile ghostty-theme-launcher-preview
 ```

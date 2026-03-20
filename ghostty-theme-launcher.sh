@@ -38,6 +38,7 @@ themes=(
 ghostty_bin="${GHOSTTY_BIN:-$(command -v ghostty || true)}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 preview_helper="${script_dir}/ghostty-theme-launcher-preview"
+shell_helper="${script_dir}/ghostty-theme-launcher-shell"
 
 if [[ -x "${preview_helper}" ]]; then
   if selection="$("${preview_helper}" "${themes[@]}")"; then
@@ -95,6 +96,20 @@ fi
 launch_dir="${PWD:-$HOME}"
 if resolved_dir="$(pwd -P 2>/dev/null)"; then
   launch_dir="${resolved_dir}"
+fi
+
+user_shell="${GHOSTTY_THEME_LAUNCHER_SHELL:-${SHELL:-/usr/bin/bash}}"
+shell_name="${user_shell##*/}"
+
+if [[ -x "${shell_helper}" && "${shell_name}" == "bash" ]]; then
+  exec "${ghostty_bin}" \
+    --gtk-single-instance=false \
+    --theme="${selection}" \
+    --working-directory="${launch_dir}" \
+    --env="GHOSTTY_THEME_LAUNCHER_THEME=${selection}" \
+    --env="GHOSTTY_THEME_LAUNCHER_IDLE_APP=${shell_name}" \
+    --env="GHOSTTY_THEME_LAUNCHER_TARGET_SHELL=${user_shell}" \
+    -e "${shell_helper}"
 fi
 
 window_title="${selection} - ${launch_dir}"

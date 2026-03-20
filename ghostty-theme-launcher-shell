@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+target_shell="${GHOSTTY_THEME_LAUNCHER_TARGET_SHELL:-${SHELL:-/usr/bin/bash}}"
+
+if [[ ! -x "${target_shell}" ]]; then
+  target_shell="$(command -v bash || true)"
+fi
+
+if [[ -z "${target_shell}" ]]; then
+  printf 'No supported interactive shell was found for Ghostty Theme Launcher.\n' >&2
+  exit 1
+fi
+
+runtime_root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+temp_dir="$(mktemp -d "${runtime_root%/}/ghostty-theme-launcher-shell.XXXXXX")"
+
+cleanup() {
+  rm -rf "${temp_dir}"
+}
+trap cleanup EXIT HUP INT TERM
+
+rc_file="${temp_dir}/bashrc"
+cat > "${rc_file}" <<'EOF'
+__ghostty_theme_launcher_source_ghostty_bash() {
+  local candidate
+
+  for candidate in \
+    "${GHOSTTY_RESOURCES_DIR:-}/shell-integration/bash/ghostty.bash" \
+    "/usr/share/ghostty/shell-integration/bash/ghostty.bash" \
+    "/usr/local/share/ghostty/shell-integration/bash/ghostty.bash" \
+    "/snap/ghostty/current/usr/share/ghostty/shell-integration/bash/ghostty.bash" \
+    "${HOME}/.local/share/ghostty/shell-integration/bash/ghostty.bash"
+  do
+    [[ -n "${candidate}" && -f "${candidate}" ]] || continue
+    builtin source "${candidate}"
+    return 0
+  done
+
+  return 1
+}
+
+__ghostty_theme_launcher_source_bash_preexec() {
+  local candidate
+
+  for candidate in \
+    "${GHOSTTY_RESOURCES_DIR:-}/shell-integration/bash/bash-preexec.sh" \
+    "/usr/share/ghostty/shell-integration/bash/bash-preexec.sh" \
+    "/usr/local/share/ghostty/shell-integration/bash/bash-preexec.sh" \
+    "/snap/ghostty/current/usr/share/ghostty/shell-integration/bash/bash-preexec.sh" \
+    "${HOME}/.local/share/ghostty/shell-integration/bash/bash-preexec.sh"
+  do
+    [[ -n "${candidate}" && -f "${candidate}" ]] || continue
+    builtin source "${candidate}"
+    return 0
+  done
+
+  return 1
+}
+
+__ghostty_theme_launcher_source_ghostty_bash
+
+if [[ -f "${HOME}/.bashrc" ]]; then
+  builtin source "${HOME}/.bashrc"
+fi
+
+if ! type __ghostty_preexec >/dev/null 2>&1 || ! type __ghostty_precmd >/dev/null 2>&1; then
+  __ghostty_theme_launcher_source_ghostty_bash || true
+fi
+
+if ! declare -p preexec_functions >/dev/null 2>&1; then
+  __ghostty_theme_launcher_source_bash_preexec || true
+fi
+
+__ghostty_theme_launcher_theme="${GHOSTTY_THEME_LAUNCHER_THEME:-Ghostty}"
+__ghostty_theme_launcher_idle_app="${GHOSTTY_THEME_LAUNCHER_IDLE_APP:-bash}"
+__ghostty_theme_launcher_title_tty="$(tty 2>/dev/null || true)"
+__ghostty_theme_launcher_title_updater_pid=""
+__ghostty_theme_launcher_in_preexec=""
+__ghostty_theme_launcher_saved_ps0="${PS0-}"
+__ghostty_theme_launcher_ps0_fallback='$(__ghostty_theme_launcher_preexec_hook "${BASH_COMMAND:-}")'
+
+__ghostty_theme_launcher_strip_title_feature() {
+  local raw_features="${GHOSTTY_SHELL_FEATURES:-}"
+  local feature
+  local -a kept_features=()
+
+  [[ -n "${raw_features}" ]] || return 0
+
+  IFS=',' read -r -a __ghostty_theme_launcher_features <<< "${raw_features}"
+  for feature in "${__ghostty_theme_launcher_features[@]}"; do
+    [[ "${feature}" == "title" ]] && continue
+    kept_features+=("${feature}")
+  done
+
+  (
+    IFS=,
+    printf '%s' "${kept_features[*]}"
+  )
+}
+
+if [[ -n "${GHOSTTY_SHELL_FEATURES:-}" ]]; then
+  GHOSTTY_SHELL_FEATURES="$(__ghostty_theme_launcher_strip_title_feature)"
+fi
+
+__ghostty_theme_launcher_pwd() {
+  builtin pwd -P 2>/dev/null || builtin pwd
+}
+
+__ghostty_theme_launcher_set_title() {
+  local app_name="${1:-${__ghostty_theme_launcher_idle_app}}"
+  printf '\033]2;%s - %s - %s\007' \
+    "${__ghostty_theme_launcher_theme}" \
+    "${app_name}" \
+    "$(__ghostty_theme_launcher_pwd)"
+}
+
+__ghostty_theme_launcher_display_app_name() {
+  local app_name="${1:-${__ghostty_theme_launcher_idle_app}}"
+
+  case "${app_name}" in
+    claude)
+      printf 'Claude Code'
+      ;;
+    codex)
+      printf 'OpenAI Codex'
+      ;;
+    copilot|github-copilot)
+      printf 'GitHub Copilot'
+      ;;
+    nvim)
+      printf 'Neovim'
+      ;;
+    *)
+      printf '%s' "${app_name}"
+      ;;
+  esac
+}
+
+__ghostty_theme_launcher_command_name() {
+  local command_text="${1:-}"
+  local token
+  local -a tokens=()
+
+  read -r -a tokens <<< "${command_text}"
+  for token in "${tokens[@]}"; do
+    case "${token}" in
+      env|sudo|command|builtin|nohup|time)
+        continue
+        ;;
+      -*|[A-Za-z_][A-Za-z0-9_]*=*)
+        continue
+        ;;
+    esac
+
+    token="${token##*/}"
+    __ghostty_theme_launcher_display_app_name "${token:-${__ghostty_theme_launcher_idle_app}}"
+    return 0
+  done
+
+  __ghostty_theme_launcher_display_app_name "${__ghostty_theme_launcher_idle_app}"
+}
+
+__ghostty_theme_launcher_stop_title_updater() {
+  local updater_pid
+
+  if [[ -n "${__ghostty_theme_launcher_title_updater_pid:-}" ]]; then
+    kill "${__ghostty_theme_launcher_title_updater_pid}" 2>/dev/null || true
+    wait "${__ghostty_theme_launcher_title_updater_pid}" 2>/dev/null || true
+    __ghostty_theme_launcher_title_updater_pid=""
+  fi
+
+  if [[ -n "${__ghostty_theme_launcher_title_tty:-}" ]] && command -v pgrep >/dev/null 2>&1; then
+    while IFS= read -r updater_pid; do
+      kill "${updater_pid}" 2>/dev/null || true
+    done < <(
+      {
+        pgrep -f "ghostty-theme-launcher-title-updater .* ${__ghostty_theme_launcher_title_tty}" 2>/dev/null
+        pgrep -f "tty_path.*${__ghostty_theme_launcher_title_tty}" 2>/dev/null
+      } | sort -u
+    )
+  fi
+}
+
+__ghostty_theme_launcher_start_title_updater() {
+  local app_name="${1:-${__ghostty_theme_launcher_idle_app}}"
+  local current_pwd
+  local had_monitor=0
+
+  __ghostty_theme_launcher_stop_title_updater
+  __ghostty_theme_launcher_set_title "${app_name}"
+
+  [[ -n "${__ghostty_theme_launcher_title_tty:-}" && -w "${__ghostty_theme_launcher_title_tty}" ]] || return 0
+  current_pwd="$(__ghostty_theme_launcher_pwd)"
+
+  case "$-" in
+    *m*)
+      had_monitor=1
+      set +m
+      ;;
+  esac
+
+  /bin/sh -c '
+    theme_name=$1
+    app_name=$2
+    pwd_value=$3
+    tty_path=$4
+
+    while :; do
+      printf "\033]2;%s - %s - %s\007" "$theme_name" "$app_name" "$pwd_value" > "$tty_path" 2>/dev/null || exit 0
+      sleep 0.8
+    done
+  ' ghostty-theme-launcher-title-updater \
+    "${__ghostty_theme_launcher_theme}" \
+    "${app_name}" \
+    "${current_pwd}" \
+    "${__ghostty_theme_launcher_title_tty}" \
+    </dev/null >/dev/null 2>&1 &
+  __ghostty_theme_launcher_title_updater_pid=$!
+
+  if (( had_monitor )); then
+    set -m
+  fi
+}
+
+__ghostty_theme_launcher_precmd() {
+  __ghostty_theme_launcher_ensure_preexec_hook
+  __ghostty_theme_launcher_stop_title_updater
+  __ghostty_theme_launcher_set_title "$(__ghostty_theme_launcher_display_app_name "${__ghostty_theme_launcher_idle_app}")"
+}
+
+__ghostty_theme_launcher_preexec_hook() {
+  local command_text
+  local hook_status
+
+  if [[ -n "${__ghostty_theme_launcher_in_preexec:-}" ]]; then
+    return 0
+  fi
+
+  command_text="$(LC_ALL=C HISTTIMEFORMAT='' builtin history 1 2>/dev/null || true)"
+  command_text="${command_text#*[[:digit:]][* ] }"
+  if [[ -z "${command_text}" ]]; then
+    command_text="${1:-${BASH_COMMAND:-}}"
+  fi
+
+  __ghostty_theme_launcher_in_preexec=1
+  __ghostty_theme_launcher_start_title_updater \
+    "$(__ghostty_theme_launcher_command_name "${command_text}")"
+  hook_status=$?
+  __ghostty_theme_launcher_in_preexec=""
+  return "${hook_status}"
+}
+
+__ghostty_theme_launcher_append_unique() {
+  local array_name="$1"
+  local function_name="$2"
+  local entry
+  local -n hook_array="${array_name}"
+
+  for entry in "${hook_array[@]}"; do
+    [[ "${entry}" == "${function_name}" ]] && return 0
+  done
+
+  hook_array+=("${function_name}")
+}
+
+__ghostty_theme_launcher_ensure_preexec_hook() {
+  local cleaned_ps0
+
+  if declare -p preexec_functions >/dev/null 2>&1 && [[ "$(declare -p preexec_functions 2>/dev/null)" == declare\ -a* ]]; then
+    __ghostty_theme_launcher_append_unique preexec_functions __ghostty_theme_launcher_preexec_hook
+    cleaned_ps0="${PS0-}"
+    cleaned_ps0="${cleaned_ps0//${__ghostty_theme_launcher_ps0_fallback}/}"
+    if [[ "${cleaned_ps0}" != "${PS0-}" ]]; then
+      PS0="${cleaned_ps0}"
+      if [[ -z "${PS0}" ]]; then
+        PS0="${__ghostty_theme_launcher_saved_ps0}"
+      fi
+    fi
+  fi
+}
+
+if declare -p precmd_functions >/dev/null 2>&1 && [[ "$(declare -p precmd_functions 2>/dev/null)" == declare\ -a* ]]; then
+  __ghostty_theme_launcher_append_unique precmd_functions __ghostty_theme_launcher_precmd
+fi
+
+if declare -p preexec_functions >/dev/null 2>&1 && [[ "$(declare -p preexec_functions 2>/dev/null)" == declare\ -a* ]]; then
+  __ghostty_theme_launcher_append_unique preexec_functions __ghostty_theme_launcher_preexec_hook
+fi
+
+if ! declare -p precmd_functions >/dev/null 2>&1; then
+  if declare -p PROMPT_COMMAND >/dev/null 2>&1 && [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == declare\ -a* ]]; then
+    case " ${PROMPT_COMMAND[*]} " in
+      *" __ghostty_theme_launcher_precmd "*) ;;
+      *) PROMPT_COMMAND=("${PROMPT_COMMAND[@]}" __ghostty_theme_launcher_precmd) ;;
+    esac
+  else
+    case ";${PROMPT_COMMAND:-};" in
+      *";__ghostty_theme_launcher_precmd;"*)
+        ;;
+      *)
+        PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND};}__ghostty_theme_launcher_precmd"
+        ;;
+    esac
+  fi
+fi
+
+if ! declare -p preexec_functions >/dev/null 2>&1; then
+  PS0="${__ghostty_theme_launcher_ps0_fallback}"
+fi
+
+__ghostty_theme_launcher_prompt_suffix='\[\e]2;${__ghostty_theme_launcher_theme} - ${__ghostty_theme_launcher_idle_app} - $(__ghostty_theme_launcher_pwd)\a\]'
+case "${PS1:-}" in
+  *"__ghostty_theme_launcher_prompt_suffix"*|*"__ghostty_theme_launcher_pwd"*|*"${__ghostty_theme_launcher_theme} - ${__ghostty_theme_launcher_idle_app}"*)
+    ;;
+  *)
+    PS1="${PS1:-\s-\v\$ }${__ghostty_theme_launcher_prompt_suffix}"
+    ;;
+esac
+
+__ghostty_theme_launcher_precmd
+EOF
+
+env -u SHELLOPTS -u BASHOPTS "${target_shell}" --rcfile "${rc_file}" -i
+shell_status=$?
+exit "${shell_status}"
