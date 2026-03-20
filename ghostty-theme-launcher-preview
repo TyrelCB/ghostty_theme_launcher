@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+
+try:
+    import gi
+
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gdk, Gtk, Pango
+except Exception:
+    sys.exit(3)
+
+
+RANDOM_LABEL = "Random"
+DEFAULT_THEME = "Vibrant Ink"
+FALLBACK_THEME = {
+    "background": "#10151d",
+    "foreground": "#e6edf3",
+    "cursor-color": "#ffb454",
+    "selection-background": "#334155",
+    "selection-foreground": "#f8fafc",
+    "palette": {
+        1: "#ff6b6b",
+        2: "#8bd450",
+        4: "#7cc7ff",
+        5: "#c099ff",
+        6: "#67e8f9",
+    },
+}
+
+
+def theme_dirs():
+    env_dir = os.environ.get("GHOSTTY_THEME_DIR")
+    candidates = []
+    if env_dir:
+        candidates.extend([path for path in env_dir.split(":") if path])
+
+    candidates.extend(
+        [
+            os.path.expanduser("~/.config/ghostty/themes"),
+            os.path.expanduser("~/.local/share/ghostty/themes"),
+            os.path.expanduser(
+                "~/.local/share/flatpak/app/com.mitchellh.ghostty/current/active/files/share/ghostty/themes"
+            ),
+            "/usr/share/ghostty/themes",
+            "/usr/local/share/ghostty/themes",
+            "/var/lib/flatpak/app/com.mitchellh.ghostty/current/active/files/share/ghostty/themes",
+            "/snap/ghostty/current/share/ghostty/themes",
+        ]
+    )
+    return [path for path in candidates if os.path.isdir(path)]
+
+
+def find_theme_file(theme_name):
+    for base in theme_dirs():
+        candidate = os.path.join(base, theme_name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def parse_theme(theme_name):
+    theme_path = find_theme_file(theme_name)
+    theme_data = {
+        "background": FALLBACK_THEME["background"],
+        "foreground": FALLBACK_THEME["foreground"],
+        "cursor-color": FALLBACK_THEME["cursor-color"],
+        "selection-background": FALLBACK_THEME["selection-background"],
+        "selection-foreground": FALLBACK_THEME["selection-foreground"],
+        "palette": dict(FALLBACK_THEME["palette"]),
+        "path": theme_path or "Theme file not found",
+    }
+
+    if not theme_path:
+        return theme_data
+
+    with open(theme_path, "r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = [part.strip() for part in line.split("=", 1)]
+            if key == "palette" and "=" in value:
+                index_text, color = [part.strip() for part in value.split("=", 1)]
+                try:
+                    theme_data["palette"][int(index_text)] = color
+                except ValueError:
+                    continue
+                continue
+
+            if key in theme_data:
+                theme_data[key] = value
+
+    return theme_data
+
+
+def markup_escape(text):
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+class ThemePicker:
+    def __init__(self, themes):
+        self.themes = [RANDOM_LABEL] + list(themes)
+        self.selection = None
+        self.preview_css = Gtk.CssProvider()
+
+        self.window = Gtk.Dialog(title="Ghostty Theme Launcher")
+        self.window.set_default_size(980, 700)
+        self.window.set_border_width(14)
+        self.window.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        launch_button = self.window.add_button("Launch", Gtk.ResponseType.OK)
+        launch_button.get_style_context().add_class("suggested-action")
+        self.window.set_default_response(Gtk.ResponseType.OK)
+
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen,
+                self.preview_css,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+
+        content = self.window.get_content_area()
+        content.set_spacing(14)
+
+        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        content.add(layout)
+
+        layout.pack_start(self.build_theme_list(), False, False, 0)
+        layout.pack_start(self.build_preview_panel(), True, True, 0)
+
+        self.window.connect("response", self.on_response)
+        self.window.connect("delete-event", self.on_delete)
+
+        self.select_theme(DEFAULT_THEME)
+
+    def build_theme_list(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.set_size_request(280, -1)
+
+        heading = Gtk.Label()
+        heading.set_markup("<b>Themes</b>")
+        heading.set_xalign(0)
+        outer.pack_start(heading, False, False, 0)
+
+        subheading = Gtk.Label(
+            label="Pick a theme on the left and review the preview pane before launching."
+        )
+        subheading.set_xalign(0)
+        subheading.set_line_wrap(True)
+        subheading.set_max_width_chars(28)
+        outer.pack_start(subheading, False, False, 0)
+
+        self.store = Gtk.ListStore(str)
+        for theme in self.themes:
+            self.store.append([theme])
+
+        self.tree = Gtk.TreeView(model=self.store)
+        self.tree.set_headers_visible(False)
+        self.tree.set_enable_search(True)
+        self.tree.set_search_column(0)
+
+        column = Gtk.TreeViewColumn("Theme", Gtk.CellRendererText(), text=0)
+        column.set_expand(True)
+        self.tree.append_column(column)
+
+        selection = self.tree.get_selection()
+        selection.connect("changed", self.on_selection_changed)
+        self.tree.connect("row-activated", self.on_row_activated)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.tree)
+        outer.pack_start(scroll, True, True, 0)
+
+        return outer
+
+    def build_preview_panel(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+
+        heading = Gtk.Label()
+        heading.set_markup("<b>Preview</b>")
+        heading.set_xalign(0)
+        outer.pack_start(heading, False, False, 0)
+
+        self.theme_name = Gtk.Label()
+        self.theme_name.set_xalign(0)
+        outer.pack_start(self.theme_name, False, False, 0)
+
+        self.theme_path = Gtk.Label()
+        self.theme_path.set_xalign(0)
+        self.theme_path.set_selectable(True)
+        self.theme_path.set_line_wrap(True)
+        self.theme_path.set_max_width_chars(72)
+        outer.pack_start(self.theme_path, False, False, 0)
+
+        chips = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.swatches = {}
+        for key, label in [
+            ("background", "Background"),
+            ("foreground", "Foreground"),
+            ("cursor-color", "Cursor"),
+            ("selection-background", "Selection"),
+            ("palette-4", "Accent"),
+        ]:
+            chips.pack_start(self.build_swatch(key, label), True, True, 0)
+        outer.pack_start(chips, False, False, 0)
+
+        terminal_frame = Gtk.Frame()
+        terminal_frame.set_shadow_type(Gtk.ShadowType.NONE)
+        outer.pack_start(terminal_frame, True, True, 0)
+
+        terminal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        terminal_box.set_name("preview-terminal")
+        terminal_frame.add(terminal_box)
+
+        titlebar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        titlebar.set_name("preview-titlebar")
+        titlebar.set_margin_top(14)
+        titlebar.set_margin_start(16)
+        titlebar.set_margin_end(16)
+        titlebar.set_margin_bottom(10)
+        terminal_box.pack_start(titlebar, False, False, 0)
+
+        title_label = Gtk.Label(label="ghostty")
+        title_label.set_xalign(0)
+        title_label.set_name("preview-title")
+        titlebar.pack_start(title_label, False, False, 0)
+
+        sample = Gtk.Label()
+        sample.set_name("preview-sample")
+        sample.set_xalign(0)
+        sample.set_yalign(0)
+        sample.set_margin_start(16)
+        sample.set_margin_end(16)
+        sample.set_margin_bottom(16)
+        sample.override_font(Pango.FontDescription("Monospace 11"))
+        terminal_box.pack_start(sample, True, True, 0)
+        self.sample = sample
+
+        hint = Gtk.Label(
+            label="Double-click a theme to launch immediately, or use Launch."
+        )
+        hint.set_xalign(0)
+        outer.pack_start(hint, False, False, 0)
+
+        return outer
+
+    def build_swatch(self, key, label):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        chip = Gtk.EventBox()
+        chip.set_name(f"swatch-{key}")
+        chip.set_size_request(-1, 34)
+        box.pack_start(chip, False, False, 0)
+
+        title = Gtk.Label(label=label)
+        title.set_xalign(0)
+        box.pack_start(title, False, False, 0)
+
+        value = Gtk.Label(label="#000000")
+        value.set_xalign(0)
+        box.pack_start(value, False, False, 0)
+
+        self.swatches[key] = (chip, value)
+        return box
+
+    def select_theme(self, theme_name):
+        for index, row in enumerate(self.store):
+            if row[0] == theme_name:
+                path = Gtk.TreePath(index)
+                self.tree.set_cursor(path)
+                self.tree.scroll_to_cell(path, None, False, 0, 0)
+                self.selection = theme_name
+                self.refresh_preview(theme_name)
+                return
+
+    def on_selection_changed(self, tree_selection):
+        model, tree_iter = tree_selection.get_selected()
+        if tree_iter is None:
+            return
+        theme_name = model[tree_iter][0]
+        self.selection = theme_name
+        self.refresh_preview(theme_name)
+
+    def on_row_activated(self, *_args):
+        self.window.response(Gtk.ResponseType.OK)
+
+    def on_delete(self, *_args):
+        Gtk.main_quit()
+        return False
+
+    def on_response(self, _dialog, response_id):
+        if response_id == Gtk.ResponseType.OK and self.selection:
+            print(self.selection)
+            Gtk.main_quit()
+            return
+
+        Gtk.main_quit()
+        sys.exit(1)
+
+    def refresh_preview(self, theme_name):
+        if theme_name == RANDOM_LABEL:
+            theme_data = dict(FALLBACK_THEME)
+            theme_data["palette"] = dict(FALLBACK_THEME["palette"])
+            theme_data["path"] = "Launches a random theme from the curated list."
+            display_name = RANDOM_LABEL
+        else:
+            theme_data = parse_theme(theme_name)
+            display_name = theme_name
+
+        self.theme_name.set_markup(
+            f"<span size='x-large'><b>{markup_escape(display_name)}</b></span>"
+        )
+        self.theme_path.set_text(theme_data["path"])
+
+        accent_color = theme_data["palette"].get(4, theme_data["cursor-color"])
+        swatch_values = {
+            "background": theme_data["background"],
+            "foreground": theme_data["foreground"],
+            "cursor-color": theme_data["cursor-color"],
+            "selection-background": theme_data["selection-background"],
+            "palette-4": accent_color,
+        }
+        for key, value in swatch_values.items():
+            _chip, label = self.swatches[key]
+            label.set_text(value)
+
+        sample_text = (
+            f"$ ghostty --theme \"{display_name}\"\n"
+            "Preview section active\n"
+            "$ git status\n"
+            "On branch main\n"
+            "nothing to commit, working tree clean"
+        )
+        self.sample.set_text(sample_text)
+
+        css = f"""
+        #preview-terminal {{
+            background: {theme_data['background']};
+            border-radius: 14px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        #preview-titlebar {{
+            background: {theme_data['selection-background']};
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }}
+        #preview-title,
+        #preview-sample {{
+            color: {theme_data['foreground']};
+        }}
+        #swatch-background {{
+            background: {theme_data['background']};
+            border-radius: 8px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        #swatch-foreground {{
+            background: {theme_data['foreground']};
+            border-radius: 8px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        #swatch-cursor-color {{
+            background: {theme_data['cursor-color']};
+            border-radius: 8px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        #swatch-selection-background {{
+            background: {theme_data['selection-background']};
+            border-radius: 8px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        #swatch-palette-4 {{
+            background: {accent_color};
+            border-radius: 8px;
+            border: 1px solid {theme_data['selection-background']};
+        }}
+        """
+        self.preview_css.load_from_data(css.encode("utf-8"))
+
+    def run(self):
+        self.window.show_all()
+        Gtk.main()
+
+
+def main(argv):
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return 3
+
+    themes = argv[1:]
+    if not themes:
+        return 3
+
+    picker = ThemePicker(themes)
+    picker.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

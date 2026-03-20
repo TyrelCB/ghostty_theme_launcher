@@ -7,6 +7,8 @@ launcher_name="ghostty-theme-launcher"
 launcher_url="${repo_base}/${launcher_name}.sh"
 desktop_name="${launcher_name}.desktop"
 desktop_url="${repo_base}/${desktop_name}"
+preview_name="${launcher_name}-preview"
+preview_url="${repo_base}/${preview_name}"
 
 bin_dir="${HOME}/.local/bin"
 data_dir="${XDG_DATA_HOME:-${HOME}/.local/share}"
@@ -214,9 +216,11 @@ trap cleanup EXIT HUP INT TERM
 
 download "$launcher_url" "${tmp_dir}/${launcher_name}.sh"
 download "$desktop_url" "${tmp_dir}/${desktop_name}"
+download "$preview_url" "${tmp_dir}/${preview_name}"
 
 mkdir -p "$bin_dir" "$app_dir"
 install -Dm755 "${tmp_dir}/${launcher_name}.sh" "$launcher_path"
+install -Dm755 "${tmp_dir}/${preview_name}" "${bin_dir}/${preview_name}"
 icon_value="$(resolve_ghostty_icon)"
 launcher_icon_value="$icon_value"
 if install_launcher_icon "$icon_value"; then

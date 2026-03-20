@@ -7,6 +7,9 @@ It uses `zenity` for the picker dialog and launches Ghostty with
 `--gtk-single-instance=false` so the selected theme is respected even if
 Ghostty is already running.
 
+When Python GTK bindings are available, the launcher upgrades to a two-pane
+picker with a live preview section driven by Ghostty's actual theme files.
+
 ## Quick Install
 
 ```sh
@@ -17,12 +20,14 @@ The installer downloads the latest launcher files from GitHub and installs them
 to:
 
 - `~/.local/bin/ghostty-theme-launcher`
+- `~/.local/bin/ghostty-theme-launcher-preview`
 - `~/.local/share/applications/ghostty-theme-launcher.desktop`
 - `~/.local/share/icons/hicolor/.../ghostty-theme-launcher.*`
 
 ## What It Does
 
 - Shows a graphical picker with a curated list of Ghostty themes.
+- Shows a preview section with live colors for the currently selected theme.
 - Includes a `Random` option that selects from the same curated list.
 - Starts a new Ghostty window with the chosen theme.
 - Sets the window title to `<theme> - <pwd>` at launch time.
@@ -32,12 +37,14 @@ to:
 
 - `install.sh`: One-line installer for the latest GitHub version.
 - `ghostty-theme-launcher.sh`: Theme picker and Ghostty launcher script.
+- `ghostty-theme-launcher-preview`: GTK helper that renders the preview pane.
 - `ghostty-theme-launcher.desktop`: Desktop entry that points to the installed script.
 
 ## Requirements
 
 - Linux with Ghostty installed and available in `PATH`
-- `zenity`
+- `python3` with `PyGObject` for the live preview pane
+- `zenity` for the fallback picker if GTK bindings are unavailable
 - A desktop environment that reads `.desktop` files from
   `~/.local/share/applications`
 
@@ -76,8 +83,13 @@ to:
 
 ## How It Works
 
-The launcher script builds a `zenity --list --radiolist` dialog from the theme
-array in `ghostty-theme-launcher.sh`.
+The launcher script prefers a GTK helper that renders the theme list on the
+left and a live preview section on the right. The preview colors are parsed
+from Ghostty theme files such as `/usr/share/ghostty/themes/Argonaut`.
+
+If the GTK helper is unavailable, the launcher falls back to a
+`zenity --list --radiolist` dialog built from the theme array in
+`ghostty-theme-launcher.sh`.
 
 If `Random` is selected, the script chooses a theme from the curated list using
 Bash's `RANDOM`.
@@ -106,6 +118,7 @@ Manual install:
 
 ```bash
 install -Dm755 ghostty-theme-launcher.sh ~/.local/bin/ghostty-theme-launcher
+install -Dm755 ghostty-theme-launcher-preview ~/.local/bin/ghostty-theme-launcher-preview
 ```
 
 Patch the desktop entry to your local install path:
@@ -173,6 +186,7 @@ Validate the script syntax:
 ```bash
 bash -n ghostty-theme-launcher.sh
 sh -n install.sh
+python3 -m py_compile ghostty-theme-launcher-preview
 ```
 
 Validate the desktop entry:

@@ -35,39 +35,58 @@ themes=(
   "Wez"
 )
 
-if ! command -v zenity >/dev/null 2>&1; then
-  printf 'zenity is required for the Ghostty theme launcher.\n' >&2
-  exit 1
-fi
-
 ghostty_bin="${GHOSTTY_BIN:-$(command -v ghostty || true)}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+preview_helper="${script_dir}/ghostty-theme-launcher-preview"
+
+if [[ -x "${preview_helper}" ]]; then
+  if selection="$("${preview_helper}" "${themes[@]}")"; then
+    :
+  else
+    helper_status=$?
+    if [[ "${helper_status}" -eq 1 ]]; then
+      exit 0
+    fi
+  fi
+fi
 
 if [[ -z "${ghostty_bin}" ]]; then
-  zenity --error --title="Ghostty Theme Launcher" --text="Ghostty was not found in PATH."
+  if command -v zenity >/dev/null 2>&1; then
+    zenity --error --title="Ghostty Theme Launcher" --text="Ghostty was not found in PATH."
+  else
+    printf 'Ghostty was not found in PATH.\n' >&2
+  fi
   exit 1
 fi
 
-dialog_args=(
-  --list
-  --title="Ghostty Theme Launcher"
-  --text="Choose a Ghostty theme"
-  --radiolist
-  --column=""
-  --column="Theme"
-)
-
-dialog_args+=(FALSE "Random")
-for theme in "${themes[@]}"; do
-  if [[ "${theme}" == "Vibrant Ink" ]]; then
-    dialog_args+=(TRUE "${theme}")
-  else
-    dialog_args+=(FALSE "${theme}")
+if [[ -z "${selection:-}" ]]; then
+  if ! command -v zenity >/dev/null 2>&1; then
+    printf 'zenity is required for the Ghostty theme launcher fallback dialog.\n' >&2
+    exit 1
   fi
-done
 
-dialog_args+=(--height=900 --width=420)
+  dialog_args=(
+    --list
+    --title="Ghostty Theme Launcher"
+    --text="Choose a Ghostty theme"
+    --radiolist
+    --column=""
+    --column="Theme"
+  )
 
-selection="$(zenity "${dialog_args[@]}")" || exit 0
+  dialog_args+=(FALSE "Random")
+  for theme in "${themes[@]}"; do
+    if [[ "${theme}" == "Vibrant Ink" ]]; then
+      dialog_args+=(TRUE "${theme}")
+    else
+      dialog_args+=(FALSE "${theme}")
+    fi
+  done
+
+  dialog_args+=(--height=900 --width=420)
+
+  selection="$(zenity "${dialog_args[@]}")" || exit 0
+fi
 
 if [[ "${selection}" == "Random" ]]; then
   selection="${themes[RANDOM % ${#themes[@]}]}"
