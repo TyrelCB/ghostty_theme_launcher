@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
 import os
+import shlex
+import subprocess
 import sys
+import threading
 
 try:
     import gi
 
     gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gdk, Gtk, Pango
+    from gi.repository import Gdk, GLib, Gtk, Pango
 except Exception:
     sys.exit(3)
 
@@ -32,6 +35,14 @@ FALLBACK_THEME = {
         8: "#7f8ea3",
     },
 }
+DEFAULT_REPO_BASE = "https://raw.githubusercontent.com/TyrelCB/ghostty_theme_launcher/main"
+INSTALL_REPO_BASE = (os.environ.get("GHOSTTY_THEME_LAUNCHER_REPO") or DEFAULT_REPO_BASE).rstrip(
+    "/"
+)
+INSTALL_URL = os.environ.get("GHOSTTY_THEME_LAUNCHER_INSTALL_URL") or (
+    f"{INSTALL_REPO_BASE}/install.sh"
+)
+UPDATE_COMMAND = f"curl -fsSL {shlex.quote(INSTALL_URL)} | sh"
 
 
 def theme_dirs():
@@ -128,11 +139,14 @@ class ThemePicker:
         self.selection = None
         self.result = None
         self.exit_code = 1
+        self.is_updating = False
+        self.chrome_css = Gtk.CssProvider()
         self.preview_css = Gtk.CssProvider()
 
         self.window = Gtk.Window(title="Ghostty Theme Launcher")
         self.window.set_default_size(1120, 760)
         self.window.set_border_width(14)
+        self.window.set_name("launcher-window")
         self.window.set_role("ghostty-theme-launcher")
         self.window.set_type_hint(Gdk.WindowTypeHint.NORMAL)
         self.window.set_skip_taskbar_hint(False)
@@ -140,23 +154,43 @@ class ThemePicker:
         self.window.set_icon_name("ghostty-theme-launcher")
         self.window.set_wmclass("ghostty-theme-launcher", "GhosttyThemeLauncher")
 
+        settings = Gtk.Settings.get_default()
+        if settings is not None:
+            settings.set_property("gtk-application-prefer-dark-theme", True)
+
         launch_button = Gtk.Button.new_with_label("Launch")
+        launch_button.set_name("launch-button")
         launch_button.get_style_context().add_class("suggested-action")
         launch_button.connect("clicked", self.on_launch)
         self.window.set_default(launch_button)
+        self.launch_button = launch_button
+
+        update_button = Gtk.Button.new_with_label("Update")
+        update_button.set_name("update-button")
+        update_button.set_tooltip_text(UPDATE_COMMAND)
+        update_button.connect("clicked", self.on_update)
+        self.update_button = update_button
 
         cancel_button = Gtk.Button.new_with_label("Cancel")
+        cancel_button.set_name("cancel-button")
         cancel_button.connect("clicked", self.on_cancel)
+        self.cancel_button = cancel_button
 
         screen = Gdk.Screen.get_default()
         if screen is not None:
             Gtk.StyleContext.add_provider_for_screen(
                 screen,
-                self.preview_css,
+                self.chrome_css,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+            Gtk.StyleContext.add_provider_for_screen(
+                screen,
+                self.preview_css,
+                Gtk.STYLE_PROVIDER_PRIORITY_USER,
             )
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.set_name("launcher-content")
         content.set_hexpand(True)
         content.set_vexpand(True)
         self.window.add(content)
@@ -170,17 +204,95 @@ class ThemePicker:
         layout.pack_start(self.build_theme_list(), False, False, 0)
         layout.pack_start(self.build_preview_panel(), True, True, 0)
 
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        footer.set_hexpand(True)
+
+        self.status_label = Gtk.Label()
+        self.status_label.set_name("status-label")
+        self.status_label.set_xalign(0)
+        self.status_label.set_line_wrap(True)
+        self.status_label.set_hexpand(True)
+        footer.pack_start(self.status_label, True, True, 0)
+
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        actions.set_halign(Gtk.Align.END)
+        actions.pack_start(update_button, False, False, 0)
         actions.pack_start(cancel_button, False, False, 0)
         actions.pack_start(launch_button, False, False, 0)
-        content.pack_start(actions, False, False, 0)
+        footer.pack_start(actions, False, False, 0)
+        content.pack_start(footer, False, False, 0)
 
         self.window.connect("delete-event", self.on_delete)
         self.window.connect("key-press-event", self.on_key_press)
 
+        self.apply_chrome_css()
         self.select_theme(DEFAULT_THEME)
         self.tree.grab_focus()
+
+    def apply_chrome_css(self):
+        css = """
+        #launcher-window {
+            background-image: linear-gradient(180deg, #090b10 0%, #121722 100%);
+            background-color: #0c0f14;
+            color: #eef2f7;
+        }
+        #launcher-window label {
+            color: #eef2f7;
+        }
+        #theme-scroll,
+        #preview-scroll {
+            background-color: #0b0f15;
+            border-radius: 12px;
+            border: 1px solid #1c2431;
+        }
+        #theme-tree.view {
+            background-color: #0b0f15;
+            color: #f5f7fb;
+        }
+        #theme-tree.view:selected,
+        #theme-tree.view:selected:focus {
+            background-color: #173d66;
+            color: #fbfdff;
+        }
+        #launch-button {
+            background-image: none;
+            background-color: #0f5dc0;
+            color: #f8fbff;
+            border-radius: 10px;
+            border: 1px solid #2d7de3;
+        }
+        #launch-button:hover {
+            background-color: #1672e0;
+        }
+        #update-button,
+        #cancel-button {
+            background-image: none;
+            background-color: #181e28;
+            color: #e8edf5;
+            border-radius: 10px;
+            border: 1px solid #2a3443;
+        }
+        #update-button:hover,
+        #cancel-button:hover {
+            background-color: #222b39;
+        }
+        #update-button:disabled,
+        #launch-button:disabled {
+            background-image: none;
+            background-color: #10141c;
+            color: #778295;
+            border-color: #1c2431;
+        }
+        #status-label {
+            color: #9aa8bb;
+        }
+        #status-label.success {
+            color: #92e8b6;
+        }
+        #status-label.error {
+            color: #ff9c9c;
+        }
+        """
+        self.chrome_css.load_from_data(css.encode("utf-8"))
 
     def build_theme_list(self):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -205,6 +317,7 @@ class ThemePicker:
             self.store.append([theme])
 
         self.tree = Gtk.TreeView(model=self.store)
+        self.tree.set_name("theme-tree")
         self.tree.set_headers_visible(False)
         self.tree.set_enable_search(True)
         self.tree.set_search_column(0)
@@ -218,6 +331,7 @@ class ThemePicker:
         self.tree.connect("row-activated", self.on_row_activated)
 
         scroll = Gtk.ScrolledWindow()
+        scroll.set_name("theme-scroll")
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
@@ -261,6 +375,7 @@ class ThemePicker:
         outer.pack_start(chips, False, False, 0)
 
         terminal_frame = Gtk.Frame()
+        terminal_frame.set_name("preview-shell-frame")
         terminal_frame.set_shadow_type(Gtk.ShadowType.NONE)
         terminal_frame.set_hexpand(True)
         terminal_frame.set_vexpand(True)
@@ -301,6 +416,7 @@ class ThemePicker:
         sample.override_font(Pango.FontDescription("Monospace 11"))
 
         sample_scroll = Gtk.ScrolledWindow()
+        sample_scroll.set_name("preview-scroll")
         sample_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sample_scroll.set_shadow_type(Gtk.ShadowType.NONE)
         sample_scroll.set_hexpand(True)
@@ -373,16 +489,94 @@ class ThemePicker:
         Gtk.main_quit()
 
     def on_launch(self, *_args):
+        if self.is_updating:
+            return
         if not self.selection:
             return
         self.result = self.selection
         self.exit_code = 0
         Gtk.main_quit()
 
+    def on_update(self, *_args):
+        if self.is_updating:
+            return
+
+        self.is_updating = True
+        self.update_button.set_sensitive(False)
+        self.launch_button.set_sensitive(False)
+        self.tree.set_sensitive(False)
+        self.set_status(
+            "Running the one-line installer. Reopen the launcher after it finishes.",
+            "neutral",
+        )
+
+        worker = threading.Thread(target=self.run_update, daemon=True)
+        worker.start()
+
     def on_delete(self, *_args):
         self.exit_code = 1
         Gtk.main_quit()
         return False
+
+    def run_update(self):
+        process = subprocess.run(
+            ["/bin/sh", "-lc", UPDATE_COMMAND],
+            text=True,
+            capture_output=True,
+        )
+        GLib.idle_add(
+            self.finish_update,
+            process.returncode,
+            process.stdout or "",
+            process.stderr or "",
+        )
+
+    def finish_update(self, return_code, stdout_text, stderr_text):
+        self.is_updating = False
+        self.update_button.set_sensitive(True)
+        self.launch_button.set_sensitive(True)
+        self.tree.set_sensitive(True)
+
+        if return_code == 0:
+            self.set_status(
+                "Update installed. Close and reopen the launcher to load the latest version.",
+                "success",
+            )
+            dialog = Gtk.MessageDialog(
+                transient_for=self.window,
+                flags=0,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text="Ghostty Theme Launcher updated",
+            )
+            dialog.format_secondary_text(
+                "The one-line installer completed successfully. Close and reopen the launcher to use the refreshed files."
+            )
+            dialog.run()
+            dialog.destroy()
+        else:
+            output = (stderr_text.strip() or stdout_text.strip() or UPDATE_COMMAND).strip()
+            self.set_status("Update failed. Review the installer output and try again.", "error")
+            dialog = Gtk.MessageDialog(
+                transient_for=self.window,
+                flags=0,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Ghostty Theme Launcher update failed",
+            )
+            dialog.format_secondary_text(output[-700:])
+            dialog.run()
+            dialog.destroy()
+
+        return False
+
+    def set_status(self, message, tone):
+        self.status_label.set_text(message)
+        context = self.status_label.get_style_context()
+        context.remove_class("success")
+        context.remove_class("error")
+        if tone in ("success", "error"):
+            context.add_class(tone)
 
     def ensure_tag(self, name, **properties):
         tag_table = self.sample_buffer.get_tag_table()
