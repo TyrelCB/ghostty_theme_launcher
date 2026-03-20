@@ -70,13 +70,34 @@ find_icon_file() {
 resolve_ghostty_icon() {
   icon_value="com.mitchellh.ghostty"
 
+  desktop_dirs="
+${HOME}/.local/share/applications
+${HOME}/.local/share/flatpak/exports/share/applications
+/var/lib/flatpak/exports/share/applications
+/var/lib/snapd/desktop/applications
+/usr/local/share/applications
+/usr/share/applications
+"
+
   for desktop_file in \
     "${HOME}/.local/share/applications/com.mitchellh.ghostty.desktop" \
+    "${HOME}/.local/share/applications/ghostty.desktop" \
+    "${HOME}/.local/share/applications/ghostty_ghostty.desktop" \
     "${HOME}/.local/share/flatpak/exports/share/applications/com.mitchellh.ghostty.desktop" \
+    "${HOME}/.local/share/flatpak/exports/share/applications/ghostty.desktop" \
+    "${HOME}/.local/share/flatpak/exports/share/applications/ghostty_ghostty.desktop" \
     "/var/lib/flatpak/exports/share/applications/com.mitchellh.ghostty.desktop" \
+    "/var/lib/flatpak/exports/share/applications/ghostty.desktop" \
+    "/var/lib/flatpak/exports/share/applications/ghostty_ghostty.desktop" \
     "/var/lib/snapd/desktop/applications/com.mitchellh.ghostty.desktop" \
+    "/var/lib/snapd/desktop/applications/ghostty.desktop" \
+    "/var/lib/snapd/desktop/applications/ghostty_ghostty.desktop" \
     "/usr/local/share/applications/com.mitchellh.ghostty.desktop" \
-    "/usr/share/applications/com.mitchellh.ghostty.desktop"
+    "/usr/local/share/applications/ghostty.desktop" \
+    "/usr/local/share/applications/ghostty_ghostty.desktop" \
+    "/usr/share/applications/com.mitchellh.ghostty.desktop" \
+    "/usr/share/applications/ghostty.desktop" \
+    "/usr/share/applications/ghostty_ghostty.desktop"
   do
     [ -f "$desktop_file" ] || continue
     desktop_icon="$(read_desktop_value Icon "$desktop_file")"
@@ -85,6 +106,21 @@ resolve_ghostty_icon() {
       break
     fi
   done
+
+  if [ "$icon_value" = "com.mitchellh.ghostty" ]; then
+    found_desktop_file="$(
+      for desktop_dir in $desktop_dirs; do
+        [ -d "$desktop_dir" ] || continue
+        find "$desktop_dir" -maxdepth 1 -type f -iname '*ghostty*.desktop' -print -quit 2>/dev/null
+      done | sed -n '1p'
+    )"
+    if [ -n "$found_desktop_file" ]; then
+      desktop_icon="$(read_desktop_value Icon "$found_desktop_file")"
+      if [ -n "$desktop_icon" ]; then
+        icon_value="$desktop_icon"
+      fi
+    fi
+  fi
 
   resolved_icon="$(find_icon_file "$icon_value" || true)"
   if [ -n "$resolved_icon" ]; then
