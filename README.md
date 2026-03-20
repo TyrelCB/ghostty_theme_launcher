@@ -7,6 +7,18 @@ It uses `zenity` for the picker dialog and launches Ghostty with
 `--gtk-single-instance=false` so the selected theme is respected even if
 Ghostty is already running.
 
+## Quick Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TyrelCB/ghostty_theme_launcher/main/install.sh | sh
+```
+
+The installer downloads the latest launcher files from GitHub and installs them
+to:
+
+- `~/.local/bin/ghostty-theme-launcher`
+- `~/.local/share/applications/ghostty-theme-launcher.desktop`
+
 ## What It Does
 
 - Shows a graphical picker with a curated list of Ghostty themes.
@@ -17,6 +29,7 @@ Ghostty is already running.
 
 ## Files
 
+- `install.sh`: One-line installer for the latest GitHub version.
 - `ghostty-theme-launcher.sh`: Theme picker and Ghostty launcher script.
 - `ghostty-theme-launcher.desktop`: Desktop entry that points to the installed script.
 
@@ -76,23 +89,39 @@ ghostty --gtk-single-instance=false --theme="<theme>" --title="<theme> - <pwd>"
 
 ## Installation
 
-Install the script into `~/.local/bin`:
+Use the one-line installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TyrelCB/ghostty_theme_launcher/main/install.sh | sh
+```
+
+Or run the installer from a local clone:
+
+```sh
+./install.sh
+```
+
+Manual install:
 
 ```bash
 install -Dm755 ghostty-theme-launcher.sh ~/.local/bin/ghostty-theme-launcher
 ```
 
-Install the desktop entry into `~/.local/share/applications`:
+Patch the desktop entry to your local install path:
 
 ```bash
-install -Dm644 ghostty-theme-launcher.desktop \
+mkdir -p ~/.local/share/applications
+sed \
+  -e "s|^TryExec=.*$|TryExec=$HOME/.local/bin/ghostty-theme-launcher|" \
+  -e "s|^Exec=.*$|Exec=$HOME/.local/bin/ghostty-theme-launcher|" \
+  ghostty-theme-launcher.desktop > \
   ~/.local/share/applications/ghostty-theme-launcher.desktop
 ```
 
 The desktop entry expects the installed script at:
 
 ```text
-/home/tyrel/.local/bin/ghostty-theme-launcher
+$HOME/.local/bin/ghostty-theme-launcher
 ```
 
 ## Usage
@@ -142,6 +171,7 @@ Validate the script syntax:
 
 ```bash
 bash -n ghostty-theme-launcher.sh
+sh -n install.sh
 ```
 
 Validate the desktop entry:
