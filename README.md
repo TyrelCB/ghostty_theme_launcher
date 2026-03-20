@@ -18,6 +18,7 @@ to:
 
 - `~/.local/bin/ghostty-theme-launcher`
 - `~/.local/share/applications/ghostty-theme-launcher.desktop`
+- `~/.local/share/icons/hicolor/.../ghostty-theme-launcher.*`
 
 ## What It Does
 
