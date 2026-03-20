@@ -9,6 +9,10 @@ desktop_name="${launcher_name}.desktop"
 desktop_url="${repo_base}/${desktop_name}"
 preview_name="${launcher_name}-preview"
 preview_url="${repo_base}/${preview_name}"
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+local_launcher="${script_dir}/${launcher_name}.sh"
+local_desktop="${script_dir}/${desktop_name}"
+local_preview="${script_dir}/${preview_name}"
 
 bin_dir="${HOME}/.local/bin"
 data_dir="${XDG_DATA_HOME:-${HOME}/.local/share}"
@@ -208,15 +212,28 @@ download() {
   exit 1
 }
 
+stage_file() {
+  local_path="$1"
+  remote_url="$2"
+  destination="$3"
+
+  if [ -f "$local_path" ]; then
+    cp "$local_path" "$destination"
+    return
+  fi
+
+  download "$remote_url" "$destination"
+}
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT HUP INT TERM
 
-download "$launcher_url" "${tmp_dir}/${launcher_name}.sh"
-download "$desktop_url" "${tmp_dir}/${desktop_name}"
-download "$preview_url" "${tmp_dir}/${preview_name}"
+stage_file "$local_launcher" "$launcher_url" "${tmp_dir}/${launcher_name}.sh"
+stage_file "$local_desktop" "$desktop_url" "${tmp_dir}/${desktop_name}"
+stage_file "$local_preview" "$preview_url" "${tmp_dir}/${preview_name}"
 
 mkdir -p "$bin_dir" "$app_dir"
 install -Dm755 "${tmp_dir}/${launcher_name}.sh" "$launcher_path"
